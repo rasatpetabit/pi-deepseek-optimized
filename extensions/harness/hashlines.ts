@@ -45,15 +45,31 @@ export const editLinesSchema = {
 		},
 		edits: {
 			type: "array",
-			description: "Hash-anchored edits to apply. Each edit replaces lines from..to (inclusive, 1-based) with new_text.",
+			description:
+				"Hash-anchored edits to apply. Each edit replaces lines from..to (inclusive, 1-based) with new_text.",
 			items: {
 				type: "object",
 				properties: {
 					from: { type: "integer", description: "1-based start line number." },
-					from_hash: { type: "string", description: "3-char hex hash of the from line (from the read annotation)." },
-					to: { type: "integer", description: "1-based end line number (inclusive)." },
-					to_hash: { type: "string", description: "3-char hex hash of the to line (from the read annotation)." },
-					new_text: { type: "string", description: "Replacement text for lines from..to. May contain multiple lines (newline-separated)." },
+					from_hash: {
+						type: "string",
+						description:
+							"3-char hex hash of the from line (from the read annotation).",
+					},
+					to: {
+						type: "integer",
+						description: "1-based end line number (inclusive).",
+					},
+					to_hash: {
+						type: "string",
+						description:
+							"3-char hex hash of the to line (from the read annotation).",
+					},
+					new_text: {
+						type: "string",
+						description:
+							"Replacement text for lines from..to. May contain multiple lines (newline-separated).",
+					},
 				},
 				required: ["from", "from_hash", "to", "to_hash", "new_text"],
 			},
@@ -72,16 +88,6 @@ export interface HashlineStats {
 	hashMismatches: number;
 	/** Number of edit_lines successful applications. */
 	editSuccesses: number;
-}
-
-/**
- * Return type from the tool_result event handler.
- * (Defined locally because ToolResultEventResult is not re-exported.)
- */
-interface LocalToolResultEventResult {
-	content?: { type: string; text?: string; data?: string; mimeType?: string }[];
-	details?: unknown;
-	isError?: boolean;
 }
 
 /**
@@ -121,14 +127,19 @@ export function registerHashlines(
 
 			// Only process text content (skip image-only reads).
 			const textContent = event.content.find(
-				(c): c is { type: "text"; text: string } => c.type === "text" && typeof c.text === "string",
+				(c): c is { type: "text"; text: string } =>
+					c.type === "text" && typeof c.text === "string",
 			);
 			if (!textContent) return;
 
 			// Determine the starting line number (from offset parameter).
-			const input = event.input as { offset?: number } | Record<string, unknown>;
+			const input = event.input as
+				| { offset?: number }
+				| Record<string, unknown>;
 			const offset =
-				typeof input?.offset === "number" && input.offset > 0 ? input.offset : 1;
+				typeof input?.offset === "number" && input.offset > 0
+					? input.offset
+					: 1;
 
 			// Annotate the content.
 			const annotated = annotateContent(textContent.text, offset);
@@ -140,12 +151,12 @@ export function registerHashlines(
 
 			// Rebuild the content array with the annotated text.
 			return {
-					content: event.content.map((c) =>
-						c.type === "text" && typeof c.text === "string"
-							? { type: "text" as const, text: annotated }
-							: c,
-					),
-				};
+				content: event.content.map((c) =>
+					c.type === "text" && typeof c.text === "string"
+						? { type: "text" as const, text: annotated }
+						: c,
+				),
+			};
 		},
 	);
 
@@ -168,7 +179,10 @@ export function registerHashlines(
 		parameters: editLinesSchema as any, // JSON Schema is runtime-compatible with TSchema
 		executionMode: "sequential",
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-			const { path: rawPath, edits } = params as { path: string; edits: HashEdit[] };
+			const { path: rawPath, edits } = params as {
+				path: string;
+				edits: HashEdit[];
+			};
 			stats.editCalls++;
 
 			const absolutePath = resolve(ctx.cwd, rawPath);
@@ -178,8 +192,13 @@ export function registerHashlines(
 			try {
 				content = await readFile(absolutePath, "utf-8");
 			} catch (err) {
-			return {
-					content: [{ type: "text" as const, text: `Error reading file: ${err instanceof Error ? err.message : String(err)}` }],
+				return {
+					content: [
+						{
+							type: "text" as const,
+							text: `Error reading file: ${err instanceof Error ? err.message : String(err)}`,
+						},
+					],
 					isError: true,
 					details: undefined,
 				};
@@ -188,72 +207,31 @@ export function registerHashlines(
 			const lines = content.split("\n");
 
 			// Validate all edits before applying any (fail-fast on first mismatch).
-			for (const edit of edits) {
-				const fromIdx = edit.from - 1;
-				const toIdx = edit.to - 1;
-
-				if (fromIdx < 0 || fromIdx >= lines.length) {
-					return {
-						content: [{ type: "text" as const, text: `edit_lines: line ${edit.from} is out of range (file has ${lines.length} lines).` }],
-						isError: true,
-						details: undefined,
-					};
-				}
-				if (toIdx < 0 || toIdx >= lines.length || toIdx < fromIdx) {
-					return {
-						content: [{ type: "text" as const, text: `edit_lines: line ${edit.to} is out of range or before 'from' (file has ${lines.length} lines).` }],
-						isError: true,
-						details: undefined,
-					};
-				}
-
-				const actualFromHash = lineHash(lines[fromIdx]!);
-				if (actualFromHash !== edit.from_hash) {
-					stats.hashMismatches++;
-					return {
-						content: [{
-							type: "text" as const,
-							text: `edit_lines: line ${edit.from} hash mismatch — claimed "${edit.from_hash}", actual "${actualFromHash}".\nCurrent line: "${lines[fromIdx]}"\n\nThe file may have changed since you last read it. Use 'read' to get fresh content with current hashes, then retry.`,
-						}],
-						isError: true,
-						details: undefined,
-					};
-				}
-
-				// Only check to_hash if from != to (single-line edits don't need to verify the same line twice).
-				if (edit.to !== edit.from) {
-					const actualToHash = lineHash(lines[toIdx]!);
-					if (actualToHash !== edit.to_hash) {
-						stats.hashMismatches++;
-						return {
-							content: [{
-								type: "text" as const,
-								text: `edit_lines: line ${edit.to} hash mismatch — claimed "${edit.to_hash}", actual "${actualToHash}".\nCurrent line: "${lines[toIdx]}"\n\nThe file may have changed since you last read it. Use 'read' to get fresh content with current hashes, then retry.`,
-							}],
-							isError: true,
-							details: undefined,
-						};
-					}
-				}
+			const validationError = validateEdits(lines, edits);
+			if (validationError) {
+				stats.hashMismatches++;
+				return {
+					content: [{ type: "text" as const, text: validationError }],
+					isError: true,
+					details: undefined,
+				};
 			}
 
-			// All hashes verified — apply edits in reverse order to preserve
-			// line numbers for subsequent edits.
-			const sortedEdits = [...edits].sort((a, b) => b.to - a.to);
-			for (const edit of sortedEdits) {
-				const fromIdx = edit.from - 1;
-				const toIdx = edit.to - 1;
-				const newLines = edit.new_text.split("\n");
-				lines.splice(fromIdx, toIdx - fromIdx + 1, ...newLines);
-			}
+			// All hashes verified — apply edits.
+			const newLines = applyEditsToLines(lines, edits);
 
 			// Write the file.
-			const newContent = lines.join("\n");
+			const newContent = newLines.join("\n");
 			try {
 				await writeFile(absolutePath, newContent, "utf-8");
 			} catch (err) {
 				return {
-					content: [{ type: "text" as const, text: `Error writing file: ${err instanceof Error ? err.message : String(err)}` }],
+					content: [
+						{
+							type: "text" as const,
+							text: `Error writing file: ${err instanceof Error ? err.message : String(err)}`,
+						},
+					],
 					isError: true,
 					details: undefined,
 				};
@@ -261,7 +239,6 @@ export function registerHashlines(
 
 			stats.editSuccesses++;
 
-			// Build a simple summary for the model.
 			const linesChanged = edits.reduce(
 				(sum, e) => sum + (e.to - e.from + 1),
 				0,
@@ -272,22 +249,23 @@ export function registerHashlines(
 			);
 
 			return {
-					content: [{
+				content: [
+					{
 						type: "text" as const,
-						text: `Successfully applied ${edits.length} edit${edits.length !== 1 ? "s" : ""} to ${rawPath} (${linesChanged} line${linesChanged !== 1 ? "s" : ""} replaced, ${newLinesAdded} line${newLinesAdded !== 1 ? "s" : ""} added).`,
-					}],
-					details: {
-						editsApplied: edits.length,
-						linesChanged,
-						linesAdded: newLinesAdded,
+						text: buildEditSummary(edits, rawPath),
 					},
-				};
+				],
+				details: {
+					editsApplied: edits.length,
+					linesChanged,
+					linesAdded: newLinesAdded,
+				},
+			};
 		},
 	};
 
 	pi.registerTool(editLinesTool);
 
-	return stats;
 	return stats;
 }
 
@@ -297,7 +275,10 @@ export function registerHashlines(
  *
  * @returns Error string if invalid, or null if all edits pass validation.
  */
-export function validateEdits(lines: string[], edits: HashEdit[]): string | null {
+export function validateEdits(
+	lines: string[],
+	edits: HashEdit[],
+): string | null {
 	for (const edit of edits) {
 		const fromIdx = edit.from - 1;
 		const toIdx = edit.to - 1;
@@ -329,7 +310,10 @@ export function validateEdits(lines: string[], edits: HashEdit[]): string | null
  * Applies edits in reverse order to preserve line numbers for subsequent edits.
  * Pure function extracted for testing.
  */
-export function applyEditsToLines(lines: string[], edits: HashEdit[]): string[] {
+export function applyEditsToLines(
+	lines: string[],
+	edits: HashEdit[],
+): string[] {
 	const result = [...lines];
 	const sortedEdits = [...edits].sort((a, b) => b.to - a.to);
 	for (const edit of sortedEdits) {
@@ -347,6 +331,9 @@ export function applyEditsToLines(lines: string[], edits: HashEdit[]): string[] 
  */
 export function buildEditSummary(edits: HashEdit[], path: string): string {
 	const linesChanged = edits.reduce((sum, e) => sum + (e.to - e.from + 1), 0);
-	const newLinesAdded = edits.reduce((sum, e) => sum + e.new_text.split("\n").length, 0);
+	const newLinesAdded = edits.reduce(
+		(sum, e) => sum + e.new_text.split("\n").length,
+		0,
+	);
 	return `Successfully applied ${edits.length} edit${edits.length !== 1 ? "s" : ""} to ${path} (${linesChanged} line${linesChanged !== 1 ? "s" : ""} replaced, ${newLinesAdded} line${newLinesAdded !== 1 ? "s" : ""} added).`;
 }

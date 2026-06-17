@@ -44,54 +44,60 @@ export function isAnnotated(line: string): boolean {
 }
 
 /**
+ * Detect truncation/continuation notice lines from the read tool.
+ *
+ * Matches the actual pi read tool output format:
+ *   [Showing lines 1-50 of 200. Use offset=51 to continue.]
+ *   [...output truncated. Type 'more' to continue.]
+ *
+ * Does NOT match TOML/INI section headers like [section], JSON array
+ * snippets like [1, 2, 3], or other bracketed content that is real
+ * file content requiring annotation.
+ */
+const isNoticeLine = (line: string): boolean =>
+	line.startsWith("[Showing") ||
+	(line.startsWith("[") && line.includes("to continue.]"));
+
+/**
  * Annotate raw file content with line numbers and hashes.
  *
  * @param content Raw file content (newline-separated)
  * @param startLine 1-based line number of the first line (for offset reads)
  * @returns Annotated content where each line is `     N:HHH→original line content`
  *
- * Lines that are part of continuation notices (surrounded by `[...]`) are
+ * Truncation notice lines (e.g. [Showing lines 1-50 of 200...]) are
  * left un-annotated so the model can distinguish them from file content.
+ * Blank separator lines immediately before a notice are also skipped
+ * (they are display artifacts, not real file lines).
  */
-export function annotateContent(
-	content: string,
-	startLine = 1,
-): string {
+export function annotateContent(content: string, startLine = 1): string {
 	const lines = content.split("\n");
 	const result: string[] = [];
 	let lineNum = startLine;
-	let inNoticeBlock = false;
 
-	for (const line of lines) {
-		// Detect continuation notice blocks (lines starting with '[' at the end
-		// of the content or after a blank line).
-		if (line.startsWith("[") && (line.endsWith("]") || line.includes("to continue.]"))) {
-			inNoticeBlock = true;
+	for (let i = 0; i < lines.length; i++) {
+		const line = lines[i]!;
+
+		if (isNoticeLine(line)) {
+			// Truncation/continuation notice: pass through without annotation.
+			result.push(line);
+			continue;
 		}
 
-		if (inNoticeBlock || line === "") {
-			// Empty lines and notice blocks: still annotate empty lines with hashes
-			// (the hash of an empty string is deterministic), but pass through
-			// notice block lines unchanged.
-			if (inNoticeBlock && !line.startsWith("[Showing") && !line.startsWith("[")) {
-				inNoticeBlock = false;
-			}
-			if (inNoticeBlock) {
-				result.push(line);
-			} else {
-				result.push(annotateLine(lineNum, line));
-				lineNum++;
-			}
+		if (line === "" && i + 1 < lines.length && isNoticeLine(lines[i + 1]!)) {
+			// Blank line immediately before a truncation notice — it's a display
+			// artifact, not a real file line. Pass through without annotation.
+			result.push(line);
+			continue;
+		}
+
+		if (isAnnotated(line)) {
+			// Already annotated (e.g., re-read after our hook) — pass through.
+			result.push(line);
 		} else {
-			if (isAnnotated(line)) {
-				// Already annotated (e.g., re-read after our hook) — pass through.
-				result.push(line);
-				lineNum++;
-			} else {
-				result.push(annotateLine(lineNum, line));
-				lineNum++;
-			}
+			result.push(annotateLine(lineNum, line));
 		}
+		lineNum++;
 	}
 
 	return result.join("\n");
@@ -136,12 +142,12 @@ export function errorSignature(toolName: string, errorText: string): string {
  * Catches common unhelpful error patterns and replaces them with messages
  * that tell the model *what to fix*, not just *what broke*.
  */
-export function enhanceError(
-	toolName: string,
-	errorText: string,
-): string {
+export function enhanceError(toolName: string, errorText: string): string {
 	// Empty path errors
-	if (/open\s*:?\s*no such file/i.test(errorText) || /no such file or directory/i.test(errorText)) {
+	if (
+		/open\s*:?\s*no such file/i.test(errorText) ||
+		/no such file or directory/i.test(errorText)
+	) {
 		if (/open\s+:|open\s+''/.test(errorText) || errorText.includes('""')) {
 			return `Error: the 'path' argument is empty or missing. Please provide a valid file path.`;
 		}
@@ -154,7 +160,11 @@ export function enhanceError(
 
 	// Edit tool partial-match errors — include the actual content for context.
 	// Only match edit-specific patterns to avoid catching unrelated 'not found' errors.
-	if (/old_text.*not found|old_string.*not found|did not match|exact string.*not found/i.test(errorText)) {
+	if (
+		/old_text.*not found|old_string.*not found|did not match|exact string.*not found/i.test(
+			errorText,
+		)
+	) {
 		return `${errorText}\n\nThe exact string was not found in the file. This commonly happens when:\n- The file was modified since you last read it (re-read the file)\n- Whitespace differs (tabs vs spaces, trailing whitespace)\n- You are matching content from an outdated read\nSuggestion: use read to get fresh content, then retry.`;
 	}
 

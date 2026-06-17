@@ -87,10 +87,18 @@ export function registerCacheHooks(
 					// Some providers nest reasoning under content arrays as
 					// { type: "thinking", thinking: "..." } blocks.
 					if (Array.isArray(anyMsg.content)) {
-						anyMsg.content = (anyMsg.content as unknown[]).filter((block) => {
+						const filtered = (anyMsg.content as unknown[]).filter((block) => {
 							const b = block as Record<string, unknown> | undefined;
 							return b?.type !== "thinking" && b?.type !== "reasoning";
 						});
+						// Guard: if all blocks were reasoning/thinking, the array is
+						// now empty. Some providers reject empty content arrays.
+						// Restore a minimal text block to keep the request valid.
+						if (filtered.length === 0) {
+							anyMsg.content = [{ type: "text", text: "" }];
+						} else {
+							anyMsg.content = filtered;
+						}
 					}
 				}
 			}

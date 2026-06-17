@@ -19,31 +19,21 @@ import type { HarnessConfig } from "./types.js";
 import type { FailureRecord } from "./types.js";
 import { enhanceError, errorSignature, extractErrorText } from "./utils.js";
 
-	/**
-	 * Return type from the tool_result event handler.
-	 * (Defined locally because ToolResultEventResult is not re-exported.)
-	 */
-	interface LocalToolResultEventResult {
-		content?: { type: string; text?: string; data?: string; mimeType?: string }[];
-		details?: unknown;
-		isError?: boolean;
-	}
+/**
+ * Fired when a tool finishes executing (defined locally — not re-exported).
+ */
+interface LocalToolExecutionEndEvent {
+	type: "tool_execution_end";
+	toolCallId: string;
+	toolName: string;
+	result: unknown;
+	isError: boolean;
+}
 
-	/**
-	 * Fired when a tool finishes executing (defined locally — not re-exported).
-	 */
-	interface LocalToolExecutionEndEvent {
-		type: "tool_execution_end";
-		toolCallId: string;
-		toolName: string;
-		result: unknown;
-		isError: boolean;
-	}
-
-	/**
-	 * Storm-breaker runtime state (mutable, shared across event handlers).
-	 */
-	export interface StormBreakerState {
+/**
+ * Storm-breaker runtime state (mutable, shared across event handlers).
+ */
+export interface StormBreakerState {
 	/** Current consecutive failure tracking. */
 	current: FailureRecord | null;
 	/** Total loops broken. */
@@ -97,82 +87,71 @@ export function registerStormBreaker(
 	// The `tool_execution_end` event fires with isError after each tool call.
 	// We track consecutive identical failures (same tool + same error class)
 	// and break the loop after the configured threshold.
-	pi.on("tool_execution_end", async (event: LocalToolExecutionEndEvent, ctx: ExtensionContext) => {
-		if (!event.isError) {
-			// Success — reset the failure tracker.
+	pi.on(
+		"tool_execution_end",
+		async (event: LocalToolExecutionEndEvent, ctx: ExtensionContext) => {
+			if (!event.isError) {
+				// Success — reset the failure tracker.
+				state.current = null;
+				return;
+			}
+
+			// Build a signature for dedup. The result may be an error object or
+			// the raw content. We extract text from whatever we can.
+			const resultText = extractResultText(event.result);
+
+			const sig = errorSignature(event.toolName, resultText);
+
+			const { thresholdReached } = updateFailureTracker(
+				state,
+				event.toolName,
+				sig,
+				event.toolCallId,
+				config.threshold,
+			);
+
+			if (!thresholdReached) return;
+
+			// ── Threshold reached — break the loop ──────────────────────────
+			const failure = state.current!;
 			state.current = null;
-			return;
-		}
+			state.loopsBroken++;
 
-		// Build a signature for dedup. The result may be an error object or
-		// the raw content. We extract text from whatever we can.
-		const resultAny = event.result as Record<string, unknown> | undefined;
-		const resultText =
-			typeof event.result === "string"
-				? event.result
-				: resultAny?.content
-					? extractErrorText(
-							Array.isArray(resultAny.content)
-								? (resultAny.content as { type: string; text?: string }[])
-								: [{ type: "text", text: String(resultAny.content) }],
-						)
-					: resultAny?.error
-							? String(resultAny.error)
-							: resultAny?.message
-								? String(resultAny.message)
-								: "";
+			// Abort the current agent operation to stop the loop.
+			ctx.abort();
 
-		const sig = errorSignature(event.toolName, resultText);
+			// Inject a synthesized message explaining what happened.
+			// Using sendMessage with a custom type lets us render it distinctly
+			// in the TUI and optionally trigger a turn for the user to continue.
+			const message = [
+				`Unable to continue: tool \`${failure.toolName}\` failed ${failure.count} times in a row.`,
+				``,
+				`Last error: ${resultText.slice(0, 300) || "unknown error"}`,
+				``,
+				`This usually means the arguments are wrong, or the target doesn't exist.`,
+				`Please clarify what you'd like me to do, or check the inputs and try again.`,
+			].join("\n");
 
-		if (state.current && state.current.toolName === event.toolName && state.current.errorSignature === sig) {
-			state.current.count++;
-			state.current.lastToolCallId = event.toolCallId;
-		} else {
-			state.current = {
-				toolName: event.toolName,
-				errorSignature: sig,
-				count: 1,
-				lastToolCallId: event.toolCallId,
-			};
-		}
+			pi.sendMessage(
+				{
+					customType: "harness_stormbreaker",
+					content: {
+						tool: failure.toolName,
+						count: failure.count,
+						error: resultText.slice(0, 300),
+					},
+					display: message,
+				} as any,
+				{ triggerTurn: false },
+			);
 
-		if (state.current.count < config.threshold) return;
-
-		// ── Threshold reached — break the loop ──────────────────────────
-		const failure = state.current;
-		state.current = null;
-		state.loopsBroken++;
-
-		// Abort the current agent operation to stop the loop.
-		ctx.abort();
-
-		// Inject a synthesized message explaining what happened.
-		// Using sendMessage with a custom type lets us render it distinctly
-		// in the TUI and optionally trigger a turn for the user to continue.
-		const message = [
-			`Unable to continue: tool \`${failure.toolName}\` failed ${failure.count} times in a row.`,
-			``,
-			`Last error: ${resultText.slice(0, 300) || "unknown error"}`,
-			``,
-			`This usually means the arguments are wrong, or the target doesn't exist.`,
-			`Please clarify what you'd like me to do, or check the inputs and try again.`,
-		].join("\n");
-
-		pi.sendMessage(
-			{
-				customType: "harness_stormbreaker",
-				content: { tool: failure.toolName, count: failure.count, error: resultText.slice(0, 300) },
-				display: message,
-			} as any,
-			{ triggerTurn: false },
-		);
-
-		// Surface to the user via notification.
-		ctx.ui.notify(
-			`Storm-breaker: ${failure.toolName} failed ${failure.count}x — loop broken`,
-			"warning",
-		);
-	});
+			// Surface to the user via notification.
+			ctx.ui.notify(
+				`Storm-breaker: ${failure.toolName} failed ${failure.count}x — loop broken`,
+				"warning",
+			);
+		},
+	);
 
 	return state;
 }

@@ -75,7 +75,9 @@ export function registerRewind(
 	 * object but doesn't touch the working tree or the stash list.
 	 * Returns the stash ref (SHA) or empty string if the tree is clean.
 	 */
-	async function createStashSnapshot(cwd: string): Promise<{ stashRef: string; headSha: string }> {
+	async function createStashSnapshot(
+		cwd: string,
+	): Promise<{ stashRef: string; headSha: string }> {
 		const [stashResult, headResult] = await Promise.all([
 			pi.exec("git", ["stash", "create", "--include-untracked"], {
 				cwd,
@@ -105,8 +107,8 @@ export function registerRewind(
 		const checkpoint: CheckpointEntry = {
 			turnIndex: event.turnIndex,
 			prompt: undefined, // TurnStartEvent doesn't include the prompt;
-			                    // we could intercept 'input' for this but the
-			                    // session tree navigation handles prompts.
+			// we could intercept 'input' for this but the
+			// session tree navigation handles prompts.
 			stashRef,
 			headSha,
 			timestamp: event.timestamp,
@@ -185,9 +187,16 @@ export function registerRewind(
 			}
 
 			// ── Step 2: Restore the working tree from the checkpoint ────────
-			// First clean the current working tree, then apply the saved stash.
+			// First reset the index, clean the working tree, then apply the saved stash.
 			if (checkpoint.stashRef) {
 				try {
+					// Reset the index to HEAD so files staged after the checkpoint
+					// (but not committed) become untracked and can be cleaned.
+					await pi.exec("git", ["reset", "HEAD", "--", "."], {
+						cwd: ctx.cwd,
+						timeout: 5000,
+					});
+
 					// Discard current tracked changes.
 					await pi.exec("git", ["checkout", "--", "."], {
 						cwd: ctx.cwd,
@@ -199,6 +208,25 @@ export function registerRewind(
 						cwd: ctx.cwd,
 						timeout: 5000,
 					});
+
+					// Check for HEAD drift: if commits were made between the
+					// checkpoint and now, the stash was created against a
+					// different HEAD. Reset to the checkpoint's HEAD first so
+					// the stash applies cleanly.
+					if (checkpoint.headSha) {
+						const headResult = await pi.exec("git", ["rev-parse", "HEAD"], {
+							cwd: ctx.cwd,
+							timeout: 2000,
+						});
+						const currentHead =
+							headResult.code === 0 ? headResult.stdout.trim() : "";
+						if (currentHead && currentHead !== checkpoint.headSha) {
+							await pi.exec("git", ["reset", "--hard", checkpoint.headSha], {
+								cwd: ctx.cwd,
+								timeout: 5000,
+							});
+						}
+					}
 
 					// Apply the saved stash to restore the checkpoint state.
 					await pi.exec("git", ["stash", "apply", checkpoint.stashRef], {
@@ -215,6 +243,11 @@ export function registerRewind(
 			} else {
 				// Checkpoint was a clean tree — just clean current state.
 				try {
+					// Reset index to unstage any files staged after checkpoint.
+					await pi.exec("git", ["reset", "HEAD", "--", "."], {
+						cwd: ctx.cwd,
+						timeout: 5000,
+					});
 					await pi.exec("git", ["checkout", "--", "."], {
 						cwd: ctx.cwd,
 						timeout: 5000,

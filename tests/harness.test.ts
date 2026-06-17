@@ -127,14 +127,16 @@ describe("annotateContent", () => {
 		expect(lines[1]).toMatch(/^\s+2:[0-9a-f]{3}\u2192world$/);
 	});
 
-	it("leaves continuation notice blocks un-annotated", () => {
+	it("leaves truncation notices un-annotated and skips blank separator", () => {
 		const content =
 			"line1\n\n[Showing lines 1-50 of 200. Use offset=51 to continue.]";
 		const result = annotateContent(content, 1);
 		const lines = result.split("\n");
 
 		expect(lines[0]).toMatch(/^\s+1:[0-9a-f]{3}\u2192line1$/);
-		expect(lines[1]).toMatch(/^\s+2:[0-9a-f]{3}\u2192$/);
+		// The blank separator before the notice is a display artifact, not a
+		// real file line — it should NOT be annotated with a line number.
+		expect(lines[1]).toBe("");
 		// The notice line should NOT be annotated
 		expect(lines[2]).toBe(
 			"[Showing lines 1-50 of 200. Use offset=51 to continue.]",
