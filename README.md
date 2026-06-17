@@ -6,6 +6,20 @@ DeepSeek V4 Pro costs roughly 5–7× less than Claude Sonnet but scores ~80–9
 
 **This is a direct implementation of the techniques described in Howard Chen's post: [DeepSeek V4 Pro at 5% the cost of Claude — what actually works](https://howardchen.substack.com/p/deepseek-v4-pro-at-5-the-cost-of).** The post describes `cwcode`, a Go-based terminal harness the author uses as a daily-driver coding tool with DeepSeek V4 Pro. The five techniques below are the ones the post identifies as the highest-leverage improvements. All credit for the underlying ideas belongs to the original author; this package is a TypeScript reimplementation for the pi coding harness.
 
+## Benchmarks
+
+Simulated against the exact failure modes each module targets. Run them with `npx vitest run tests/benchmarks.test.ts`.
+
+| Approach | First-attempt success | Why it matters |
+|---|---|---|
+| `edit` (exact-string matching) | **<70%** | Whitespace, indentation, staleness errors → retries |
+| `edit_lines` (hash-anchored) | **>95%** | Hash verification catches mismatches immediately |
+
+| | **Without cache stability** | **With cache stability** |
+|---|---|---|
+| Cache hits (50 turns) | 0 / 50 | **47 / 50 (94%)** |
+| Input cost | **~$96.00** | **~$6.51 (93% savings)** |
+
 ## The five modules
 
 | # | Module | Default | Active when | What it does |
@@ -17,53 +31,6 @@ DeepSeek V4 Pro costs roughly 5–7× less than Claude Sonnet but scores ~80–9
 | 5 | **Rewind** | **OFF** | Always | Git-stash-based file snapshots restorable via `/rewind N` |
 
 **Always-active modules** (storm-breaker, plan mode) are model-agnostic — they work with any model. **Model-gated modules** (cache, hashlines) only activate when the active model matches `PI_HARNESS_MODEL_PATTERN` (default: `deepseek`). When you switch to Claude or GPT, the gated modules go dormant automatically and the footer indicator disappears.
-
-## Benchmarks
-
-The claims in this README are backed by a benchmark suite in `tests/benchmarks.test.ts` that simulates the exact failure modes each module targets. Run it with:
-
-```bash
-npx vitest run tests/benchmarks.test.ts
-```
-
-### Hashline editing — first-attempt success rate
-
-| Approach | Success rate | Notes |
-|----------|-------------|-------|
-| `edit` (exact-string) | **<70%** | Whitespace, indentation, and staleness errors cause frequent retries |
-| `edit_lines` (hash-anchored) | **>95%** | Hash verification catches mismatches immediately |
-
-**Staleness detection.** If the file changed since the model read it, `edit_lines` rejects with a precise hash mismatch error (`"a1f" vs actual "3b7"`), surfacing the actual current line content. The old `edit` tool silently fails to find `oldText` and the model has no clue why.
-
-**Token savings.** Because `edit_lines` never sends `old_string`, the model produces fewer output tokens per edit — **~15-30% fewer** in the benchmark simulation — and avoids the retry loop entirely when hashes match.
-
-### Hash collision — why 12-bit is enough
-
-The FNV-1a 12-bit hash (4096 buckets) has collisions by design — ~111 collisions in a 1000-line file, ~96% in 100K random lines. But `edit_lines` verifies **both** `from_hash` and `to_hash` on the range endpoints. A false-pass requires two adjacent lines on **both** boundaries to collide simultaneously — probability <0.01% in practice.
-
-| Metric | Value |
-|--------|-------|
-| Collisions in 50-line file | **0–5** (safe for typical edits) |
-| Adjacent-line collisions in 10K lines | **<1%** |
-
-### Cache prefix stability — byte-level invariance
-
-After stripping timestamp patterns from the system prompt and sorting tool schemas deterministically, the outbound request prefix is **100% byte-identical across turns**:
-
-| Condition | Prefix stability |
-|-----------|-----------------|
-| Without timestamp stripping | **0%** — every turn changes the prefix |
-| With timestamp stripping | **100%** — identical across 10+ simulated turns |
-
-### Cost projection (50 turns @ ~16K tokens/turn)
-
-| | Without stability | With stability |
-|---|---|---|
-| Cache hits | 0/50 | 47/50 (94%, after 3 warm-up misses) |
-| Cost | **~$96.00** | **~$6.51** |
-| Savings | — | **~93%** |
-
-Cache Miss: $0.12/1K tokens → Cache Hit: $0.001/1K tokens = **120× cost spread**.
 
 ## Footer indicator
 
