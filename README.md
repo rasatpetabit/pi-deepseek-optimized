@@ -51,13 +51,7 @@ Simulated against the exact failure modes each module targets. Run them with `np
 
 ## Footer indicator
 
-When a DeepSeek-like model is active and at least one gated module is enabled, the footer shows:
-
-```
-🧠 session 788 ⚡Optimized LSP Inactive
-```
-
-The `⚡Optimized` status item appears via `ctx.ui.setStatus("harness", ...)` and clears automatically when you switch to a non-DeepSeek model. If both cache and hashlines are disabled, the indicator is hidden (there's nothing to optimize).
+When a DeepSeek-like model is active and at least one gated module is enabled, the footer shows `⚡Optimized`.
 
 ## Module 1: Cache prefix stability
 
