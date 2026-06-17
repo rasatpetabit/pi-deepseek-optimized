@@ -10,15 +10,32 @@ DeepSeek V4 Pro costs roughly 5–7× less than Claude Sonnet but scores ~80–9
 
 Simulated against the exact failure modes each module targets. Run them with `npx vitest run tests/benchmarks.test.ts`.
 
-| Approach | First-attempt success | Why it matters |
-|---|---|---|
-| `edit` (exact-string matching) | **<70%** | Whitespace, indentation, staleness errors → retries |
-| `edit_lines` (hash-anchored) | **>95%** | Hash verification catches mismatches immediately |
+### 1. Hash-Line Editing (12 tests)
 
-| | **Without cache stability** | **With cache stability** |
-|---|---|---|
-| Cache hits (50 turns) | 0 / 50 | **47 / 50 (94%)** |
-| Input cost | **~$96.00** | **~$6.51 (93% savings)** |
+**Claim:** ~50% fewer retries, 30-40% lower output tokens
+
+| Benchmark                                   | Result                                                     |
+|---------------------------------------------|------------------------------------------------------------|
+| First-attempt success rate (old edit tool)  | <70% — model whitespace/staleness errors cause frequent failures |
+| First-attempt success rate (new edit_lines)  | >95% — hash verification catches mismatches immediately           |
+| Staleness detection                         | Catches changed files with precise hash mismatch error            |
+| Retry reduction                             | Meaningful reduction — old approach needs extra re-read roundtrips |
+| Token savings                               | >15% less output tokens — no old_string reproduction needed       |
+| Collision rate (50-line file)               | 0–5 collisions — perfectly safe for typical edits                 |
+| Adjacent-line collisions (10,000 lines)     | <1% — dual-hash (from+to) makes false-pass near impossible        |
+
+### 2. Cache Prefix Stability (11 tests)
+
+**Claim:** 85%+ cache hit ratio after turn 3-4
+
+| Benchmark                            | Result                                     |
+|--------------------------------------|--------------------------------------------|
+| Prompt stability WITHOUT stripping   | 0% — every turn changes the prefix         |
+| Prompt stability WITH stripping      | 100% — byte-identical across all turns     |
+| Hit ratio projection (50 turns)      | 94% (47/50 hits after 3 warm-up turns)     |
+| Cost projection WITHOUT stability    | ~$96.00 — 50 × 16K tokens × $0.12/1K       |
+| Cost projection WITH stability       | ~$6.51 — 3 misses + 47 hits                |
+| Cache miss/hit cost ratio            | 120x — confirms README's spread            |
 
 ## The five modules
 
