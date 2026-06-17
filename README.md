@@ -6,6 +6,14 @@ DeepSeek V4 Pro costs roughly 5–7× less than Claude Sonnet but scores ~80–9
 
 **This is a direct implementation of the techniques described in Howard Chen's post: [DeepSeek V4 Pro at 5% the cost of Claude — what actually works](https://howardchen.substack.com/p/deepseek-v4-pro-at-5-the-cost-of).** The post describes `cwcode`, a Go-based terminal harness the author uses as a daily-driver coding tool with DeepSeek V4 Pro. The five techniques below are the ones the post identifies as the highest-leverage improvements. All credit for the underlying ideas belongs to the original author; this package is a TypeScript reimplementation for the pi coding harness.
 
+## How to Install
+
+```bash
+pi install git:github.com/jrimmer/pi-deepseek-optimized
+```
+
+Then reload with `/reload` and verify with `/deepseek-optimized`.
+
 ## Benchmarks
 
 Simulated against the exact failure modes each module targets. Run them with `npx vitest run tests/benchmarks.test.ts`.
@@ -102,7 +110,7 @@ The post reports that this technique alone yielded roughly half the retries per 
 
 **Practice.**
 
-- `ctrl+shift+p` (or `/harness-plan`) saves the current active tool set via `pi.getActiveTools()`, then calls `pi.setActiveTools(["read", "grep", "find", "ls"])` to restrict to read-only.
+- `ctrl+shift+p` (or `/deepseek-optimized-plan`) saves the current active tool set via `pi.getActiveTools()`, then calls `pi.setActiveTools(["read", "grep", "find", "ls"])` to restrict to read-only.
 - The `before_agent_start` hook appends a "PLAN MODE ACTIVE" directive to the system prompt instructing the model to produce a numbered plan.
 - Toggling again restores the saved tool set.
 
@@ -121,8 +129,8 @@ The post reports that this technique alone yielded roughly half the retries per 
 
 ## Commands
 
-- `/harness` — show status: all module states, stats, and configuration
-- `/harness-plan` — toggle plan mode on/off
+- `/deepseek-optimized` — show status: all module states, stats, and configuration
+- `/deepseek-optimized-plan` — toggle plan mode on/off
 - `/rewind N` — restore files to before turn N (0-based). Without N, lists checkpoints.
 
 ## Configuration
@@ -163,31 +171,6 @@ The `matchesModelPattern` function does a case-insensitive substring match again
 | DeepSeek V4 Pro | ✅ | ✅ | ✅ | ✅ | `⚡Optimized` |
 | Claude Sonnet | inactive | inactive | ✅ | ✅ | (hidden) |
 | Kimi (if pattern includes `kimi`) | ✅ | ✅ | ✅ | ✅ | `⚡Optimized` |
-
-## Install
-
-```bash
-pi install git:github.com/jrimmer/pi-deepseek-optimized
-```
-
-Or from a local checkout:
-
-```bash
-cd /path/to/pi-deepseek-optimized
-pi install ./
-```
-
-Reload after installation:
-
-```text
-/reload
-```
-
-Verify inside pi:
-
-```text
-/harness
-```
 
 ## Project structure
 

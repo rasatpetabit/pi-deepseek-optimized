@@ -20,7 +20,7 @@
  *    via /rewind N command.
  *
  * All features are independently configurable via PI_HARNESS_* env vars.
- * Run /harness to see current status and stats.
+ * Run /deepseek-optimized to see current status and stats.
  */
 import type {
 	ExtensionAPI,
@@ -114,12 +114,12 @@ export default function harnessPlugin(pi: ExtensionAPI): void {
 		updateFooterStatus(ctx);
 	});
 
-	// ── /harness command — status overview ──────────────────────────────
-	pi.registerCommand("harness", {
+	// ── /deepseek-optimized command — status overview ───────────────────
+	pi.registerCommand("deepseek-optimized", {
 		description:
-			"Show pi-harness status: active modules, stats, and configuration. Use /harness-plan to toggle plan mode.",
+			"Show pi-deepseek-optimized status: active modules, stats, and configuration. Use /deepseek-optimized-plan to toggle plan mode.",
 		handler: async (_args: string, ctx: ExtensionCommandContext) => {
-			const lines: string[] = ["pi-harness status:", ""];
+			const lines: string[] = ["pi-deepseek-optimized status:", ""];
 
 			// Module status
 			lines.push("Modules:");
@@ -164,9 +164,9 @@ export default function harnessPlugin(pi: ExtensionAPI): void {
 		},
 	});
 
-	// ── /harness-plan command — toggle plan mode ────────────────────────
+	// ── /deepseek-optimized-plan command — toggle plan mode ────────────────
 	if (config.planmode.enabled) {
-		pi.registerCommand("harness-plan", {
+		pi.registerCommand("deepseek-optimized-plan", {
 			description:
 				"Toggle plan mode (restrict to read-only tools for planning)",
 			handler: async (_args: string, ctx: ExtensionCommandContext) => {

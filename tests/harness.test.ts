@@ -850,7 +850,7 @@ describe("buildPlanDirective", () => {
 
 	it("includes the fallback command when no shortcut", () => {
 		const directive = buildPlanDirective();
-		expect(directive).toContain("/harness-plan");
+		expect(directive).toContain("/deepseek-optimized-plan");
 	});
 
 	it("contains PLAN MODE ACTIVE header", () => {

@@ -47,7 +47,7 @@ export function registerPlanMode(
 
 	if (!config.enabled) return state;
 
-	/** Toggle plan mode on/off. Called from shortcut handler and /harness-plan command. */
+	/** Toggle plan mode on/off. Called from shortcut handler and /deepseek-optimized-plan command. */
 	async function toggle(ctx: ExtensionContext): Promise<void> {
 		if (state.active) {
 			// Exit plan mode — restore saved tools.
@@ -112,7 +112,7 @@ export function registerPlanMode(
 		},
 	);
 
-	// Expose toggle for the /harness-plan command (wired in the entry point).
+	// Expose toggle for the /deepseek-optimized-plan command (wired in the entry point).
 	(
 		state as PlanModeState & {
 			toggle: (ctx: ExtensionContext) => Promise<void>;
@@ -129,7 +129,7 @@ export function registerPlanMode(
 export function buildPlanDirective(shortcut?: string): string {
 	const exitNote = shortcut
 		? `Exit plan mode (${shortcut}) when you're ready to execute the plan.`
-		: `Exit plan mode ("/harness-plan") when you're ready to execute the plan.`;
+		: `Exit plan mode ("/deepseek-optimized-plan") when you're ready to execute the plan.`;
 	return [
 		"",
 		"## PLAN MODE ACTIVE",
