@@ -1,6 +1,6 @@
 {
   "name": "pi-deepseek-optimized",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Harness techniques for DeepSeek V4 Pro on the pi coding agent (cache stability, storm-breaker, hashline editing, plan mode, rewind).",
   "license": "BSD-3-Clause",
   "author": "Jason Rimmer",

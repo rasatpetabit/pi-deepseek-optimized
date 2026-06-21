@@ -135,13 +135,14 @@ export function registerStormBreaker(
 			pi.sendMessage(
 				{
 					customType: "harness_stormbreaker",
-					content: {
+					content: message,
+					display: true,
+					details: {
 						tool: failure.toolName,
 						count: failure.count,
 						error: resultText.slice(0, 300),
 					},
-					display: message,
-				} as any,
+				},
 				{ triggerTurn: false },
 			);
 
