@@ -75,7 +75,14 @@ export const editLinesSchema = {
 			},
 		},
 	},
-	required: ["path", "edits"],
+	// NOTE: `edits` is intentionally NOT required at the schema level.
+	// A confused call that carries the sibling `edit` tool's vocabulary
+	// (top-level `oldText`/`newText`) would otherwise be hard-rejected by the
+	// framework's schema validator before `execute` runs, yielding an opaque
+	// "edits: must have required properties edits" error. By keeping `edits`
+	// optional here, such a call reaches `execute`, which detects the mix-up
+	// and returns a corrective, self-steering error (see detectConfusedEditArgs).
+	required: ["path"],
 } as const;
 
 /** Runtime stats for the /harness-hashlines command. */
@@ -169,21 +176,55 @@ export function registerHashlines(
 		name: "edit_lines",
 		label: "edit lines",
 		description:
-			"Edit a file using hash-anchored line ranges. Each edit specifies a line range (from..to, 1-based inclusive) with the expected content hashes at both endpoints. The tool reads the file fresh, verifies the hashes match, and rejects on mismatch with a precise error showing the actual vs. claimed hash. Use this instead of 'edit' when you have a recent 'read' with hash annotations — it avoids the need to reproduce exact old_string blocks character-perfectly.",
+			'Edit a file using hash-anchored line ranges. Each edit specifies a line range (from..to, 1-based inclusive) with the expected content hashes at both endpoints. The tool reads the file fresh, verifies the hashes match, and rejects on mismatch with a precise error showing the actual vs. claimed hash.\n\nWhen to use which:\n- Use edit_lines when you have a RECENT \'read\' of the file whose output shows per-line hash annotations (format: N:HHH→content). It is robust to nearby edits and avoids reproducing large unchanged blocks.\n- Use \'edit\' when you only have the text and want exact-string replacement (its params are path + edits[] of {oldText, newText}).\n- Do NOT mix the two tools: edit_lines takes `edits` of {from, from_hash, to, to_hash, new_text} — NEVER top-level oldText/newText.\n\nExample call:\n  { "path": "lib/foo.ex", "edits": [\n    { "from": 42, "from_hash": "a1b", "to": 48, "to_hash": "c4d", "new_text": "    new body" }\n  ] }\n\nIf you do not have current hashes, call \'read\' first (its output is annotated with #<hash> at each line), then build edits from those annotations.',
 		promptSnippet:
 			"Edit file using hash-anchored line ranges (preferred when you have a recent read with hash annotations)",
 		promptGuidelines: [
 			"Prefer edit_lines for edits to files you've recently read with 'read'. The read output includes per-line hashes (format: N:HHH→content). Use these hashes with edit_lines to avoid character-perfect old_string reproduction.",
 			"Use 'edit' only when you don't have a fresh read with hash annotations, or when you need to match a specific string without line numbers.",
+			"edit_lines and edit are different tools with different parameter shapes. edit_lines takes `edits` of {from, from_hash, to, to_hash, new_text} — never top-level oldText/newText. If you find yourself passing oldText/newText to edit_lines, stop and call 'edit' instead.",
 		],
 		parameters: editLinesSchema as any, // JSON Schema is runtime-compatible with TSchema
 		executionMode: "sequential",
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			stats.editCalls++;
+
+			// ── Corrective guard: detect confused `edit`-tool calls ────────────
+			//
+			// Models that have just used the sibling `edit` tool sometimes reach
+			// for edit_lines carrying edit's parameter shape (top-level
+			// oldText/newText, no `edits`). Because `edits` is not schema-required,
+			// such a call reaches here; instead of a generic validation failure
+			// we return a steering error that tells the model exactly what to do.
+			const confused = detectConfusedEditArgs(params);
+			if (confused) {
+				return {
+					content: [{ type: "text" as const, text: confused }],
+					isError: true,
+					details: undefined,
+				};
+			}
+
 			const { path: rawPath, edits } = params as {
 				path: string;
 				edits: HashEdit[];
 			};
-			stats.editCalls++;
+
+			// `edits` is optional in the schema (to let confused calls reach the
+			// guard above). A call that legitimately omits edits, or passes a
+			// non-array, gets a clear error here rather than a schema rejection.
+			if (!Array.isArray(edits) || edits.length === 0) {
+				return {
+					content: [
+						{
+							type: "text" as const,
+							text: "edit_lines: `edits` is required and must be a non-empty array of {from, from_hash, to, to_hash, new_text}.\n\nIf you meant exact-text replacement, call 'edit' (path + edits[] of {oldText, newText}).\nIf you want hash-anchored edits, call 'read' first to get per-line hashes, then pass `edits` here.",
+						},
+					],
+					isError: true,
+					details: undefined,
+				};
+			}
 
 			const absolutePath = resolve(ctx.cwd, rawPath);
 
@@ -267,6 +308,46 @@ export function registerHashlines(
 	pi.registerTool(editLinesTool);
 
 	return stats;
+}
+
+/**
+ * Detect a call to edit_lines that carries the sibling `edit` tool's
+ * parameter shape (top-level oldText/newText) instead of `edits`.
+ *
+ * Models that have just used `edit` frequently reach for `edit_lines` and
+ * carry edit's vocabulary across. Rather than failing with an opaque
+ * schema-validation message, the edit_lines tool calls this guard from
+ * `execute` (enabled by keeping `edits` optional in the schema) and returns
+ * a corrective, self-steering error.
+ *
+ * @returns Corrective error string if the args look edit-shaped, else null.
+ */
+export function detectConfusedEditArgs(params: unknown): string | null {
+	if (!params || typeof params !== "object") return null;
+	const p = params as Record<string, unknown>;
+
+	// If a valid-looking `edits` array is present, this is a real edit_lines
+	// call (or a different kind of misuse handled by validateEdits).
+	if (Array.isArray(p.edits)) return null;
+
+	// edit-tool vocabulary (top-level) — the classic confusion.
+	const editToolKeys = ["oldText", "newText", "old_string", "new_string"];
+	const hasEditVocab = editToolKeys.some((k) => k in p);
+	if (!hasEditVocab) return null;
+
+	return [
+		"edit_lines received `oldText`/`newText` (the `edit` tool's parameters), but edit_lines does not accept those.",
+		"",
+		"edit_lines requires `edits`: an array of { from, from_hash, to, to_hash, new_text }, where each hash comes from the per-line annotations in a prior `read` of `path` (format: N:HHH→content).",
+		"",
+		"  → If you want exact-text replacement: call `edit` instead (path + edits[] of {oldText, newText}).",
+		"  → If you want hash-anchored edits: `read` the file first, then build each edit from the #<hash> annotations shown at each line.",
+		"",
+		"Example edit_lines call:",
+		'  { "path": "lib/foo.ex", "edits": [',
+		'    { "from": 42, "from_hash": "a1b", "to": 48, "to_hash": "c4d", "new_text": "    new body" }',
+		"  ] }",
+	].join("\n");
 }
 
 /**

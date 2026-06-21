@@ -15,6 +15,8 @@ import {
 	validateEdits,
 	applyEditsToLines,
 	buildEditSummary,
+	editLinesSchema,
+	detectConfusedEditArgs,
 	buildPlanDirective,
 } from "../extensions/harness.js";
 import { parseConfig } from "../extensions/harness/config.js";
@@ -734,6 +736,75 @@ describe("validateEdits", () => {
 			},
 		];
 		expect(validateEdits(lines, edits)).toContain("hash mismatch");
+	});
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// detectConfusedEditArgs
+// ─────────────────────────────────────────────────────────────────────────
+
+describe("detectConfusedEditArgs", () => {
+	it("returns null when a valid edits array is present", () => {
+		expect(
+			detectConfusedEditArgs({
+				path: "f.ts",
+				edits: [
+					{ from: 1, from_hash: "abc", to: 1, to_hash: "abc", new_text: "x" },
+				],
+			}),
+		).toBeNull();
+	});
+
+	it("returns null for non-object / null params", () => {
+		expect(detectConfusedEditArgs(null)).toBeNull();
+		expect(detectConfusedEditArgs("x")).toBeNull();
+	});
+
+	it("detects the edit tool's top-level oldText/newText shape", () => {
+		const msg = detectConfusedEditArgs({
+			path: "f.ts",
+			oldText: "defp capacity_full?(shard_id) do\n  ...",
+			newText: [{ bogus: true }],
+		});
+		expect(msg).not.toBeNull();
+		expect(msg).toContain("oldText");
+		expect(msg).toContain("edit` instead");
+		expect(msg).toContain("from_hash");
+	});
+
+	it("detects old_string/new_string variants", () => {
+		const msg = detectConfusedEditArgs({
+			path: "f.ts",
+			old_string: "a",
+			new_string: "b",
+		});
+		expect(msg).not.toBeNull();
+		expect(msg).toContain("edit");
+	});
+
+	it("returns null when neither edits nor edit-vocab is present", () => {
+		expect(detectConfusedEditArgs({ path: "f.ts" })).toBeNull();
+	});
+
+	it("returns null even if edits is an empty array (handled later as missing-edits)", () => {
+		expect(detectConfusedEditArgs({ path: "f.ts", edits: [] })).toBeNull();
+	});
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// editLinesSchema (corrective relaxation)
+// ─────────────────────────────────────────────────────────────────────────
+
+describe("editLinesSchema", () => {
+	it("requires only `path` so confused edit-style calls reach execute (not a hard schema rejection)", () => {
+		expect(editLinesSchema.required).toEqual(["path"]);
+	});
+
+	it("does not reject top-level oldText/newText via additionalProperties", () => {
+		expect(editLinesSchema.properties).toHaveProperty("edits");
+		// No additionalProperties:false → stray edit-tool keys pass through to execute,
+		// where detectConfusedEditArgs returns a corrective error.
+		expect(editLinesSchema).not.toHaveProperty("additionalProperties");
 	});
 });
 

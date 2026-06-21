@@ -70,6 +70,7 @@ export {
 	applyEditsToLines,
 	buildEditSummary,
 	editLinesSchema,
+	detectConfusedEditArgs,
 } from "./harness/hashlines.js";
 export { buildPlanDirective } from "./harness/planmode.js";
 
