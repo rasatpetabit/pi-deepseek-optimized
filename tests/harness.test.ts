@@ -1,3 +1,5 @@
+import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { registerHashlines } from "../extensions/harness/hashlines.js";
 import { afterEach, describe, expect, it } from "vitest";
 import {
 	lineHash,
@@ -940,5 +942,24 @@ describe("buildPlanDirective", () => {
 		expect(directive).toContain("2. List");
 		expect(directive).toContain("3. Explain");
 		expect(directive).toContain("4. Note");
+	});
+});
+
+
+describe("edit_lines guidance", () => {
+	it("keeps parameter-mixup obligations eager and the callable example in the description", () => {
+		let tool: ToolDefinition | undefined;
+		const pi = Object.assign({} as ExtensionAPI, {
+			on() {},
+			registerTool(definition: ToolDefinition) { tool = definition; },
+		});
+		registerHashlines(pi, parseConfig().hashlines, process.cwd(), []);
+		expect(tool).toBeDefined();
+		const guidelines = tool!.promptGuidelines!.join("\n");
+		expect(guidelines).toContain("edit_lines takes `edits` of {from, from_hash, to, to_hash, new_text}");
+		expect(guidelines).toContain("never top-level oldText/newText");
+		expect(tool!.description).not.toContain("Do NOT mix the two tools");
+		expect(tool!.description).toContain('"from_hash": "a1b"');
+		expect(tool!.description).toContain("If you do not have current hashes, call 'read' first");
 	});
 });
